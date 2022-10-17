@@ -31,10 +31,10 @@ begin
           data_list_swapped(1):=  data_list_original(2);
           data_list_swapped(2):=  data_list_original(1);
           data_list_swapped(3):= data_list_original(0);
-          data_list_sum(7 downto 0):=; 
-          data_list_sum(15 downto 8):=;
-          data_list_sum(23 downto 16):=; 
-          data_list_sum(31 downto 24):=; 
+          data_list_sum(7 downto 0):= data_list_swapped(0); 
+          data_list_sum(15 downto 8):= data_list_swapped(1);
+          data_list_sum(23 downto 16):= data_list_swapped(2); 
+          data_list_sum(31 downto 24):= data_list_swapped(3); 
      end 
-          HRDATA <= ;
+          HRDATA <= data_list_sum;
 end data_swapper_arch; 
