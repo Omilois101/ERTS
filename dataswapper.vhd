@@ -21,10 +21,20 @@ begin
   process(dmao)
      variable data_list_original: data_list; 
      variable data_list_swapped: data_list;
+     variable data_list_sum: std_logic_vector(31 downto 0); 
      begin
-          data_list_original(0):= dmao.rdata(7 downto 0)
-          data_list_original(1):= dmao.rdata(15 downto 8)
-          data_list_original(2):= dmao.rdata(23 downto 16)
-          data_list_original(3):= dmao.rdata(31 downto 24)
+          data_list_original(0):= dmao.rdata(7 downto 0);
+          data_list_original(1):= dmao.rdata(15 downto 8);
+          data_list_original(2):= dmao.rdata(23 downto 16);
+          data_list_original(3):= dmao.rdata(31 downto 24);
+          data_list_swapped(0):=  data_list_original(3);
+          data_list_swapped(1):=  data_list_original(2);
+          data_list_swapped(2):=  data_list_original(1);
+          data_list_swapped(3):= data_list_original(0);
+          data_list_sum(7 downto 0):=; 
+          data_list_sum(15 downto 8):=;
+          data_list_sum(23 downto 16):=; 
+          data_list_sum(31 downto 24):=; 
      end 
+          HRDATA <= ;
 end data_swapper_arch; 
