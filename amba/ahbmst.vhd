@@ -84,6 +84,7 @@ begin
   variable hbusreq : std_ulogic;   -- bus request
   variable hprot   : std_logic_vector(3 downto 0);    -- transfer type 
   variable xhirq    : std_logic_vector(NAHBIRQ-1 downto 0); 
+  variable rdata : std_logic_vector(AHBDW-1 downto 0);
   begin
 
     v := r; ready := '0'; mexc := '0'; retry := '0'; inc := (others => '0');
