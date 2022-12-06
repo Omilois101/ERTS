@@ -1,5 +1,4 @@
 
-
 /*
  * FreeRTOS Kernel V10.1.1
  * Copyright (C) 2018 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
@@ -65,7 +64,7 @@ uint8_t bumpSwitch_status;   // TODO: declare a global variable to read bump swi
                             //       name this as bumpSwitch_status and use uint8_t
 
 // Semaphore Declaration
-SemaphoreHandle_t xSemaphore;
+SemaphoreHandle_t xbSemaphore= NULL;
 
 // static void Switch_Init
 static void Switch_Init(void);
@@ -97,8 +96,8 @@ xTaskHandle taskHandle_dcMotor;     // TODO: declare an identifier of task handl
 xTaskHandle taskHandle_InputSwitch; // TODO: declare an identifier of task handler called "taskHandle_InputSwitch"
 xTaskHandle taskHandle_OutputLED;  // TODO: declare an identifier of task handler called "taskHandle_OutputLED"
 
-xTaskHandle taskHandle_dcMotor_interrupts; 
-xTaskHandle taskHandle_OutputLED_interrupts; 
+xTaskHandle taskHandle_dcMotor_interrupts;
+xTaskHandle taskHandle_OutputLED_interrupts;
 //xTaskHandle taskHandle_BumpSwitch_interrupts;
 
 void main_program( void )
@@ -108,43 +107,48 @@ void main_program( void )
     SysTick_Init();       // TODO: initialise systick timer
     RedLED_Init();   // initialise the red LED
     int i;
+    int counter;
 
-    do{
+     do{
 
-        if (!(SW2IN | SW1IN)){
-            for (i=0; i<1000000; i++);
-            REDLED = 1;     // The red LED is blinking waiting for command
-            continue;
+         if (!(SW2IN | SW1IN)){
+             for (i=0; i<1000000; i++);
+             REDLED = 1;     // The red LED is blinking waiting for command
+             continue;
+         }if(SW1IN){
+             counter = 0;
+             while(SW1IN){
+                 SysTick_Wait10ms(10);
+                 counter++;
+             }
+             if (counter < 5){ //Polling
+                 xTaskCreate(taskMasterThread, "taskT", 128, NULL, 2, &taskHandle_BlinkRedLED);
+                 xTaskCreate(taskBumpSwitch, "taskB", 128, NULL, 1, &taskHandle_BumpSwitch);
+                 xTaskCreate(taskPlaySong, "taskS", 128, NULL, 1, &taskHandle_PlaySong);
+                 xTaskCreate(taskdcMotor, "taskM", 128, NULL, 1, &taskHandle_dcMotor);
+                 xTaskCreate(taskReadInputSwitch, "taskR", 128, NULL, 1, &taskHandle_InputSwitch);
+                 xTaskCreate(taskDisplayOutputLED, "taskD", 128, NULL, 1, &taskHandle_OutputLED);
+                 break;
+             }
+             else if (counter > 5){ //Interrupt
+                 // Creates a Semaphore
+                 xbSemaphore =  xSemaphoreCreateBinary();
 
-        }if(SW1IN){    //Polling
-               xTaskCreate(taskMasterThread, "taskT", 128, NULL, 2, &taskHandle_BlinkRedLED);
-               xTaskCreate(taskBumpSwitch, "taskB", 128, NULL, 1, &taskHandle_BumpSwitch);
-               xTaskCreate(taskPlaySong, "taskS", 128, NULL, 1, &taskHandle_PlaySong);
-               xTaskCreate(taskdcMotor, "taskM", 128, NULL, 1, &taskHandle_dcMotor);
-               xTaskCreate(taskReadInputSwitch, "taskR", 128, NULL, 1, &taskHandle_InputSwitch);
-               xTaskCreate(taskDisplayOutputLED, "taskD", 128, NULL, 1, &taskHandle_OutputLED);
-            break;
-        }
+                 // Instantiation for Interrupts
 
-        if(SW2IN){    //Interrupt
-             // Creates a Semaphore 
-             xSemaphore =  xSemaphoreCreateBinary(); 
-             // Instantiation for Interrupts 
-             EnableInterrupts();
-             BumpSwitch_Init();
-            
-             xTaskCreate(taskMasterThread, "taskT", 128, NULL, 2, &taskHandle_BlinkRedLED);
-             xTaskCreate(taskPlaySong, "taskS", 128, NULL, 1, &taskHandle_PlaySong);
-             xTaskCreate(taskReadInputSwitch, "taskR", 128, NULL, 1, &taskHandle_InputSwitch);
+                 BumpSwitch_Init();
+                 BumpSwitch_Interupt_Init();
+                 xTaskCreate(taskMasterThread, "taskT", 128, NULL, 2, &taskHandle_BlinkRedLED);
+                 xTaskCreate(taskPlaySong, "taskS", 128, NULL, 1, &taskHandle_PlaySong);
+                 xTaskCreate(taskReadInputSwitch, "taskR", 128, NULL, 1, &taskHandle_InputSwitch);
 
-             //xTaskCreate(taskBumpSwitch_interrupts, "taskB", 128, NULL, 1, &taskHandle_BumpSwitch_interrupts);
-             xTaskCreate( taskdcMotor_interrupts, "taskM", 128, NULL, 1, &taskHandle_dcMotor_interrupts);
-             xTaskCreate( taskOutputLED_interrupt, "taskD", 128, NULL, 1, &taskHandle_OutputLED_interrupt);
-            break;
-        }
-    }while(1);
-
-
+                 //xTaskCreate(taskBumpSwitch_interrupts, "taskB", 128, NULL, 1, &taskHandle_BumpSwitch_interrupts);
+                 xTaskCreate(taskdcMotor_interrupts, "taskM", 128, NULL, 1, &taskHandle_dcMotor_interrupts);
+                 xTaskCreate(taskOutputLED_interrupts, "taskD", 128, NULL, 1, &taskHandle_OutputLED_interrupts);
+                 break;
+             }
+         }
+     }while(1);
 
      vTaskStartScheduler(); // TODO: start the scheduler
 
@@ -157,16 +161,12 @@ void main_program( void )
 }
 
 void PORT4_IRQHandler(void){
-    bumpSwitch_status = P4->IV;
+        bumpSwitch_status = P4->IV;      // 2*(n+1) where n is highest priority
+        BaseType_t HigherPriorityTaskWoken; 
+        HigherPriorityTaskWoken = xTaskResumeFromISR(taskHandle_OutputLED_interrupts);
+        P4->IFG &= ~0xED; // clear flag
   
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    
-    xSemaphoreGiveFromISR( xSemaphore, &xHigherPriorityTaskWoken );
-
-    P4->IFG &= ~0xED; // clear flag
-  
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-  
+        portYIELD_FROM_ISR(HigherPriorityTaskWoken);
 }
 /*-----------------------------------------------------------------*/
 /*------------------- FreeRTOS configuration ----------------------*/
@@ -255,7 +255,8 @@ static void taskMasterThread( void *pvParameters )
 
     ColorLED_Init();  // TODO: initialise the color LED
     RedLED_Init();   // initialise the red LED
-
+//    BumpSwitch_Init();
+ //   EnableInterrupts();
     while(!SW2IN){                  // Wait for SW2 switch
         for (i=0; i<1000000; i++);  // Wait here waiting for command
         REDLED = !REDLED;           // The red LED is blinking
@@ -286,13 +287,10 @@ static void taskPlaySong( void *pvParameters ){
 static void taskBumpSwitch( void *pvParameters ){
 
     BumpSwitch_Init(); // TODO: initialise bump switches
-
-
     for( ;; )
     {
         bumpSwitch_status = Bump_Read_Input();    // TODO: use bumpSwitch_status as the variable and
                                                   //       use Bump_Read_Input to read the input
-
     };
 
 
@@ -323,26 +321,26 @@ static void taskdcMotor( void *pvParameters ){
                                                                                                                    //       use dcMotor_response and bumpSwitch_status for the parameter
        }
    }
-}; 
+};
 /// --------------------------------------End Poling -----------------------------------------------------
 
 
 /// --------------------------------------Interrupt -----------------------------------------------------
 static void taskdcMotor_interrupts( void *pvParameters ){
-  
+
     for(;;){
+
         dcMotor_Init(); // TODO: initialise the DC Motor
-        dcMotor_Forward(500,1); 
+        dcMotor_Forward(500,1);
     }
 }
 static void taskOutputLED_interrupts( void *pvParameters ){
+      EnableInterrupts();
       for( ;; )
-       {
-           xSemaphoreTake( xSemaphore, portMAX_DELAY );
-           vTaskDelay(1); 
-           OutputLED_interrupts(bumpSwitch_status);
-           vTaskDelay(1);
-           dcMotor_interrupts(bumpSwitch_status);   
+       {  vTaskSuspend(taskHandle_OutputLED_interrupts); 
+          OutputLED_interrupts(bumpSwitch_status);
+          vTaskDelay(1);
+          dcMotor_interrupts(bumpSwitch_status);
         }
 }
 
