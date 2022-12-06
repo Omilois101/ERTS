@@ -1,4 +1,3 @@
-
 /*
  * FreeRTOS Kernel V10.1.1
  * Copyright (C) 2018 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
@@ -41,7 +40,7 @@
 #include "task.h"
 #include "semphr.h"
 
-/* TI includes. */
+/* TI includes */
 #include "gpio.h"
 
 /* ARM Cortex */
@@ -50,20 +49,19 @@
 #include "SysTick.h"
 #include "inc/CortexM.h"
 
-#include "inc/songFile.h" // TODO: include the songFile header file
-#include "inc/dcMotor.h"// TODO: include the dcMotor header file
-#include "inc/bumpSwitch.h"// TODO: include the bumpSwitch header file
-#include "inc/outputLED.h"// TODO: include the outputLED header file
-#include "inc/SysTick.h"// TODO: include the SysTick header file
+#include "inc/songFile.h"
+#include "inc/dcMotor.h"
+#include "inc/bumpSwitch.h"
+#include "inc/outputLED.h"
+#include "inc/Systick.h"
 
-#define SW1IN ((*((volatile uint8_t *)(0x42098004)))^1) // TODO: bit-banded addresses positive logic of input switch S1
-#define SW2IN ((*((volatile uint8_t *)(0x42098010)))^1) // TODO: bit-banded addresses positive logic of input switch S2
-#define REDLED (*((volatile uint8_t *)(0x42098040)))
+//bit-banded addresses positive logic of input switch S1 and S2
+#define SW1IN ((*((volatile uint8_t *)(0x42098004)))^1)
+#define SW2IN ((*((volatile uint8_t *)(0x42098010)))^1)
 
-uint8_t bumpSwitch_status;   // TODO: declare a global variable to read bump switches value,
-                            //       name this as bumpSwitch_status and use uint8_t
 
-// Semaphore Declaration
+
+uint8_t bumpSwitch_status; // global variable showing the bump swtich statuses
 SemaphoreHandle_t xbSemaphore= NULL;
 
 // static void Switch_Init
@@ -98,10 +96,10 @@ xTaskHandle taskHandle_OutputLED;  // TODO: declare an identifier of task handle
 
 xTaskHandle taskHandle_dcMotor_interrupts;
 xTaskHandle taskHandle_OutputLED_interrupts;
-//xTaskHandle taskHandle_BumpSwitch_interrupts;
 
 void main_program( void )
 {
+
     prvConfigureClocks(); // initialise the clock configuration
     Switch_Init();        // TODO: initialise the switch
     SysTick_Init();       // TODO: initialise systick timer
@@ -158,15 +156,7 @@ void main_program( void )
     available for the idle and/or timer tasks to be created. See the
     memory management section on the FreeRTOS web site for more details. */
     for( ;; );
-}
 
-void PORT4_IRQHandler(void){
-        bumpSwitch_status = P4->IV;      // 2*(n+1) where n is highest priority
-        BaseType_t HigherPriorityTaskWoken; 
-        HigherPriorityTaskWoken = xTaskResumeFromISR(taskHandle_OutputLED_interrupts);
-        P4->IFG &= ~0xED; // clear flag
-  
-        portYIELD_FROM_ISR(HigherPriorityTaskWoken);
 }
 /*-----------------------------------------------------------------*/
 /*------------------- FreeRTOS configuration ----------------------*/
@@ -212,6 +202,8 @@ void vPreSleepProcessing( uint32_t ulExpectedIdleTime ){}
 /*-------------   DO NOT MODIFY ANYTHING ABOVE HERE   -------------*/
 /*--------------------------- END ---------------------------------*/
 /*-----------------------------------------------------------------*/
+
+//-------------------------- Shared functions -----------------------
 static void Switch_Init(void){
     // negative logic built-in Button 1 connected to P1.1
     // negative logic built-in Button 2 connected to P1.4
@@ -221,10 +213,38 @@ static void Switch_Init(void){
     P1->REN |= 0x12;        // enable pull resistors on P1.4 and P1.1
     P1->OUT |= 0x12;        // P1.4 and P1.1 are pull-up
 }
-/// --------------------------------------Shared Tasks -------------------------------------------
 
-// a static void function for taskReadInputSwitch
-static void taskReadInputSwitch( void *pvParameters ){ //STOP MUSIC
+static void taskPlaySong(void *pvParameters){
+    //Plays the song
+    init_song_pwm();
+    for( ;; ){
+        play_song();
+    }
+}
+
+static void taskMasterThread( void *pvParameters )
+{
+        // This task got priority 2
+        int i;
+
+        ColorLED_Init();
+
+        RedLED_Init();
+        REDLED = 1; //Switch on the LED
+
+
+        while(!SW2IN){                  // Wait for SW2 switch
+                for (i=0; i<1000000; i++);  // Wait here waiting for command
+                REDLED = !REDLED;           // The red LED is blinking
+            }
+
+        REDLED = 0; //i.e. REDLED = 0;
+        vTaskDelete(NULL); // delete its task
+}
+
+static void taskReadInputSwitch( void *pvParameters ){
+    // This function act as a switch press once to stop playing,
+    // press second time to resume
 
     char i_SW1=0;
     int i;
@@ -248,84 +268,44 @@ static void taskReadInputSwitch( void *pvParameters ){ //STOP MUSIC
     }
 }
 
-// a static void function for taskMasterThread
-static void taskMasterThread( void *pvParameters )
-{
-    int i;
+void PORT4_IRQHandler(void){
+    // Interrupt Vector of Port4
+    // Shared Variable
+    bumpSwitch_status = P4->IV;      // 2*(n+1) where n is highest priority
 
-    ColorLED_Init();  // TODO: initialise the color LED
-    RedLED_Init();   // initialise the red LED
-//    BumpSwitch_Init();
- //   EnableInterrupts();
-    while(!SW2IN){                  // Wait for SW2 switch
-        for (i=0; i<1000000; i++);  // Wait here waiting for command
-        REDLED = !REDLED;           // The red LED is blinking
+    BaseType_t HigherPriorityTaskWoken  = pdFALSE;
+
+    P4->IFG &= ~0xED; // clear flag
+
+    //the interrupt handler will give a semaphore
+    xSemaphoreGiveFromISR(xbSemaphore, &HigherPriorityTaskWoken );
+    /*
+     * More info: The give semaphore function will enable a task to run for once
+     * This makes sure the Interrupt Service Routine is of a minimal time
+     *
+     * The task thats receives the semaphore is taskInterrupt();
+     */
+}
+
+
+
+static void taskOutputLED_interrupts(void *pvParamters){
+    //Initialise the interrupt
+    EnableInterrupts();       // Clear the I bit
+
+    for ( ;; ){
+
+        xSemaphoreTake(xbSemaphore, portMAX_DELAY);
+      //  dcMotor_Stop(1);
+        vTaskSuspend(taskHandle_dcMotor_interrupts);
+        vTaskSuspend(taskHandle_PlaySong);
+        OutputLED_interrupts(bumpSwitch_status);
+        dcMotor_interrupts(bumpSwitch_status);
+        vTaskResume(taskHandle_PlaySong);
+        vTaskResume(taskHandle_dcMotor_interrupts);
     }
+}
 
-    REDLED = 0;     // TODO: Turn off the RED LED, we no longer need that.
-
-    vTaskSuspend(taskHandle_BlinkRedLED);     // TODO: This function (taskMasterThread)is no longer needed.
-                                        //       Please suspend this task itself, or maybe just delete it.
-                                        //       Question: what are the difference between 'suspend' the task,
-                                        //                 or 'delete' the task?
-};
-// TODO: create a static void function for taskPlaySong
-static void taskPlaySong( void *pvParameters ){
-    for( ;; )
-    {
-        init_song_pwm();   // TODO: initialise the song
-        play_song();      // TODO: play the song's function and run forever
-    };
-
-};
-
-
-// --------------------------------------End Shared Tasks -------------------------------------------
-
-/// --------------------------------------Poling -----------------------------------------------------
-// TODO: create a static void function for taskBumpSwitch
-static void taskBumpSwitch( void *pvParameters ){
-
-    BumpSwitch_Init(); // TODO: initialise bump switches
-    for( ;; )
-    {
-        bumpSwitch_status = Bump_Read_Input();    // TODO: use bumpSwitch_status as the variable and
-                                                  //       use Bump_Read_Input to read the input
-    };
-
-
-};
-
-
-// TODO: create a static void function for taskDisplayOutputLED
-static void taskDisplayOutputLED( void *pvParameters ){
-    for( ;; )
-    {
-        outputLED_response(bumpSwitch_status);     // TODO: use outputLED_response as the function and
-                                                   //       use bumpSwitch_status as the parameter
-    }
-
-};
-
-
-
-
-// TODO: create a static void function for taskdcMotor
-static void taskdcMotor( void *pvParameters ){
-
-    for(;;){
-       dcMotor_Init(); // TODO: initialise the DC Motor
-       dcMotor_Forward(500,1);
-       if (bumpSwitch_status == 0x6D || bumpSwitch_status == 0xAD || bumpSwitch_status == 0xCD || bumpSwitch_status == 0xE5 || bumpSwitch_status == 0xE9 || bumpSwitch_status == 0xEC){ // TODO: use a polling that continuously read from the bumpSwitch_status,
-           dcMotor_response(bumpSwitch_status );                                                                   //       and run this forever in a while loop.
-                                                                                                                   //       use dcMotor_response and bumpSwitch_status for the parameter
-       }
-   }
-};
-/// --------------------------------------End Poling -----------------------------------------------------
-
-
-/// --------------------------------------Interrupt -----------------------------------------------------
 static void taskdcMotor_interrupts( void *pvParameters ){
 
     for(;;){
@@ -334,16 +314,34 @@ static void taskdcMotor_interrupts( void *pvParameters ){
         dcMotor_Forward(500,1);
     }
 }
-static void taskOutputLED_interrupts( void *pvParameters ){
-      EnableInterrupts();
-      for( ;; )
-       {  vTaskSuspend(taskHandle_OutputLED_interrupts); 
-          OutputLED_interrupts(bumpSwitch_status);
-          vTaskDelay(1);
-          dcMotor_interrupts(bumpSwitch_status);
-        }
+
+
+
+static void taskBumpSwitch(void *pvParameters){
+    BumpSwitch_Init();
+    for( ;; ){
+        bumpSwitch_status = Bump_Read_Input();
+    }
 }
 
+static void taskDisplayOutputLED(void *pvParameters){
+    for( ;; ){
+        outputLED_response(bumpSwitch_status);
+    }
+}
+
+static void taskdcMotor( void *pvParameters ){
+
+    for(;;){
+
+       dcMotor_Init(); // TODO: initialise the DC Motor
+       dcMotor_Forward(500,1);
+       if (bumpSwitch_status == 0x6D || bumpSwitch_status == 0xAD || bumpSwitch_status == 0xCD || bumpSwitch_status == 0xE5 || bumpSwitch_status == 0xE9 || bumpSwitch_status == 0xEC){ // TODO: use a polling that continuously read from the bumpSwitch_status,
+           dcMotor_response(bumpSwitch_status );                                                                   //       and run this forever in a while loop.
+                                                                                                                   //       use dcMotor_response and bumpSwitch_status for the parameter
+       }
+   }
+};
 
 
-/// --------------------------------------End Interrupt -----------------------------------------------------
+
